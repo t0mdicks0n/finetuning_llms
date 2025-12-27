@@ -16,9 +16,10 @@ app = modal.App("swedish-sovereign-ai")
 volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
-# Model configuration - using standard HF model (not quantized)
-MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
-MAX_SEQ_LENGTH = 2048  # Reduced for memory
+# Model configuration - using latest Ministral 3 model (Dec 2025)
+# 256K context, vision capable, Apache 2.0 license
+MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
+MAX_SEQ_LENGTH = 4096  # Can go up to 256K but keeping reasonable for training
 
 # LoRA configuration (from MISSION.md)
 LORA_R = 16

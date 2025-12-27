@@ -27,7 +27,7 @@ volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
 # Base model (must match training)
-BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
+BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
 
 # Build image with llama.cpp for GGUF conversion
 image = (
