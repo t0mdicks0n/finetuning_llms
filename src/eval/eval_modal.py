@@ -7,11 +7,11 @@ Usage:
     # Compare base vs finetuned (perplexity + domain questions)
     modal run src/eval/eval_modal.py --compare
 
-    # Quick test
-    modal run src/eval/eval_modal.py --quick
+    # Quick test with fewer samples
+    modal run src/eval/eval_modal.py --compare --quick
 
-    # Full eval including EuroEval (slower)
-    modal run src/eval/eval_modal.py --compare --include-euroeval
+Note: EuroEval benchmark is currently disabled due to dependency conflicts.
+(EuroEval requires accelerate>=1.9.0, but our training stack uses 0.28.0)
 """
 
 import modal
@@ -46,21 +46,8 @@ image = (
     )
 )
 
-# Image with EuroEval (larger, slower to build)
-euroeval_image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "numpy<2",
-        "torch==2.2.0",
-        "transformers==4.40.0",
-        "accelerate==0.28.0",
-        "peft==0.10.0",
-        "bitsandbytes==0.43.0",
-        "scipy",
-        "sentencepiece",
-        "euroeval[all]",
-    )
-)
+# Note: EuroEval has dependency conflicts with our stack (requires accelerate>=1.9.0)
+# For now, EuroEval is disabled. Use ScandEval directly if needed.
 
 
 # ============================================================================
@@ -499,38 +486,18 @@ def run_comparison(val_texts: list[str], max_texts: int | None = None) -> dict:
     return results
 
 
-@app.function(
-    image=euroeval_image,
-    gpu="A100",
-    timeout=3600,
-    volumes={VOLUME_PATH: volume},
-)
 def run_euroeval_benchmark(task: str = "sentiment-classification") -> dict:
     """
-    Run EuroEval benchmark on Modal.
+    EuroEval benchmark is currently disabled due to dependency conflicts.
 
-    Args:
-        task: EuroEval task to run.
-
-    Returns:
-        Benchmark results.
+    EuroEval requires accelerate>=1.9.0 but our training stack uses accelerate==0.28.0.
+    To run EuroEval, use a separate environment or the standalone euroeval CLI.
     """
-    try:
-        from euroeval import Benchmarker
-
-        benchmarker = Benchmarker()
-
-        print(f"Running EuroEval: {task} (Swedish)")
-        result = benchmarker.benchmark(
-            model=BASE_MODEL_NAME,
-            task=task,
-            language="sv",
-        )
-
-        return {"task": task, "status": "success", "result": result}
-
-    except Exception as e:
-        return {"task": task, "status": "error", "error": str(e)}
+    return {
+        "task": task,
+        "status": "disabled",
+        "error": "EuroEval disabled due to dependency conflicts (requires accelerate>=1.9.0)",
+    }
 
 
 # ============================================================================
@@ -596,9 +563,9 @@ def main(
 
     # Run EuroEval if requested
     if include_euroeval:
-        print("\nRunning EuroEval benchmark...")
-        euroeval_result = run_euroeval_benchmark.remote("sentiment-classification")
-        results["euroeval"] = euroeval_result
+        print("\nNote: EuroEval is currently disabled due to dependency conflicts.")
+        print("(EuroEval requires accelerate>=1.9.0, our stack uses 0.28.0)")
+        results["euroeval"] = run_euroeval_benchmark("sentiment-classification")
 
     # Save results
     results_dir = Path(__file__).parent / "results"
