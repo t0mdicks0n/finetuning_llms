@@ -204,8 +204,8 @@ modal run src/train/train.py::main
 modal run src/train/train.py::main --no-test-run
 
 # Compare base vs finetuned model outputs
-modal run src/train/train.py::compare
-modal run src/train/train.py::compare --prompt "Vad är reporäntan?"
+modal run src/train/train.py::compare_models
+modal run src/train/train.py::compare_models --prompt "Vad är reporäntan?"
 
 # Export and merge adapters
 modal run src/export/merge.py
