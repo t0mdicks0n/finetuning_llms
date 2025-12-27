@@ -1,7 +1,7 @@
 """
-Modal + Unsloth training script for Swedish Sovereign AI.
+Modal training script for Swedish Sovereign AI.
 
-Fine-tunes Mistral on Riksbanken monetary policy reports.
+Fine-tunes Mistral on Riksbanken monetary policy reports using PEFT/LoRA.
 
 Usage:
     modal run src/train/train.py
@@ -16,9 +16,9 @@ app = modal.App("swedish-sovereign-ai")
 volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
-# Model configuration
-MODEL_NAME = "unsloth/mistral-7b-instruct-v0.3-bnb-4bit"
-MAX_SEQ_LENGTH = 4096
+# Model configuration - using standard HF model (not quantized)
+MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
+MAX_SEQ_LENGTH = 2048  # Reduced for memory
 
 # LoRA configuration (from MISSION.md)
 LORA_R = 16
@@ -32,25 +32,24 @@ TARGET_MODULES = [
 # Training hyperparameters
 LEARNING_RATE = 2e-4
 NUM_EPOCHS = 1
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATION_STEPS = 4
+BATCH_SIZE = 2  # Reduced for memory
+GRADIENT_ACCUMULATION_STEPS = 8
 
-# Build the Modal image with all dependencies
+# Build the Modal image - using stable transformers stack without unsloth
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "torch==2.4.0",
-        "triton==3.0.0",
-    )
-    .pip_install(
-        "unsloth[cu121-torch240] @ git+https://github.com/unslothai/unsloth.git",
-        "transformers>=4.44.0",
-        "datasets>=2.20.0",
-        "accelerate>=0.33.0",
-        "peft>=0.12.0",
-        "trl>=0.9.0",
-        "bitsandbytes>=0.43.0",
-        "huggingface_hub>=0.24.0",
+        "numpy<2",  # Pin numpy 1.x for torch compatibility
+        "torch==2.2.0",
+        "transformers==4.40.0",
+        "datasets==2.18.0",
+        "accelerate==0.28.0",
+        "peft==0.10.0",
+        "trl==0.8.6",
+        "bitsandbytes==0.43.0",
+        "scipy",
+        "sentencepiece",
+        "rich",
     )
 )
 
@@ -73,35 +72,56 @@ def train(train_data: list[dict], val_data: list[dict] | None = None):
         Path to saved adapters.
     """
     import os
+    import torch
     from datasets import Dataset
-    from trl import SFTTrainer, SFTConfig
-    from unsloth import FastLanguageModel
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        BitsAndBytesConfig,
+        TrainingArguments,
+    )
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from trl import SFTTrainer
 
     print("=" * 60)
     print("Swedish Sovereign AI - Training Pipeline")
     print("=" * 60)
 
-    # Load model
-    print(f"\nLoading model: {MODEL_NAME}")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=MODEL_NAME,
-        max_seq_length=MAX_SEQ_LENGTH,
+    # Quantization config for 4-bit loading
+    bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
-        dtype=None,  # Auto-detect
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_use_double_quant=True,
     )
 
-    # Add LoRA adapters
+    # Load model
+    print(f"\nLoading model: {MODEL_NAME}")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
+
+    # Prepare model for k-bit training
+    model = prepare_model_for_kbit_training(model)
+
+    # LoRA configuration
     print("\nAdding LoRA adapters...")
-    model = FastLanguageModel.get_peft_model(
-        model,
+    lora_config = LoraConfig(
         r=LORA_R,
-        target_modules=TARGET_MODULES,
         lora_alpha=LORA_ALPHA,
+        target_modules=TARGET_MODULES,
         lora_dropout=LORA_DROPOUT,
         bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=42,
+        task_type="CAUSAL_LM",
     )
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
 
     # Prepare dataset
     print(f"\nPreparing dataset: {len(train_data)} training examples")
@@ -123,7 +143,7 @@ def train(train_data: list[dict], val_data: list[dict] | None = None):
     output_dir = os.path.join(VOLUME_PATH, "checkpoints")
     os.makedirs(output_dir, exist_ok=True)
 
-    training_args = SFTConfig(
+    training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=NUM_EPOCHS,
         per_device_train_batch_size=BATCH_SIZE,
@@ -132,14 +152,12 @@ def train(train_data: list[dict], val_data: list[dict] | None = None):
         weight_decay=0.01,
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
-        logging_steps=10,
+        logging_steps=5,
         save_strategy="epoch",
-        evaluation_strategy="epoch" if eval_dataset else "no",
+        evaluation_strategy="no",  # Skip eval for test runs
         bf16=True,
-        max_seq_length=MAX_SEQ_LENGTH,
-        dataset_text_field="text",
-        packing=True,  # Efficient packing of sequences
         report_to="none",
+        gradient_checkpointing=True,
     )
 
     # Create trainer
@@ -150,6 +168,9 @@ def train(train_data: list[dict], val_data: list[dict] | None = None):
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         args=training_args,
+        dataset_text_field="text",
+        max_seq_length=MAX_SEQ_LENGTH,
+        packing=False,  # Disable for small test runs
     )
 
     # Train
@@ -190,7 +211,9 @@ def inference(prompt: str, max_new_tokens: int = 256):
         Generated text.
     """
     import os
-    from unsloth import FastLanguageModel
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from peft import PeftModel
 
     adapter_path = os.path.join(VOLUME_PATH, "adapters")
 
@@ -198,14 +221,24 @@ def inference(prompt: str, max_new_tokens: int = 256):
         return "ERROR: No trained model found. Run training first."
 
     print(f"Loading model from: {adapter_path}")
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=adapter_path,
-        max_seq_length=MAX_SEQ_LENGTH,
+
+    # Load base model with quantization
+    bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    # Enable faster inference
-    FastLanguageModel.for_inference(model)
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+
+    # Load LoRA adapters
+    model = PeftModel.from_pretrained(model, adapter_path)
+    tokenizer = AutoTokenizer.from_pretrained(adapter_path)
 
     # Format prompt for Mistral Instruct
     messages = [{"role": "user", "content": prompt}]
@@ -235,8 +268,14 @@ def inference(prompt: str, max_new_tokens: int = 256):
 
 
 @app.local_entrypoint()
-def main():
-    """Main entrypoint - loads data and starts training."""
+def main(test_run: bool = True):
+    """
+    Main entrypoint - loads data and starts training.
+
+    Args:
+        test_run: If True, only use 50 examples for a quick test (~$1-2).
+                  Set --no-test-run for full training.
+    """
     import json
     from pathlib import Path
 
@@ -263,6 +302,13 @@ def main():
         print(f"Loading validation data from: {val_path}")
         with open(val_path, "r", encoding="utf-8") as f:
             val_data = [json.loads(line) for line in f]
+
+    # Limit data for test run
+    if test_run:
+        print("\n*** TEST RUN MODE - using only 50 examples ***")
+        print("Use --no-test-run for full training\n")
+        train_data = train_data[:50]
+        val_data = val_data[:10] if val_data else None
 
     print(f"\nTraining examples: {len(train_data)}")
     if val_data:
