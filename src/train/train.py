@@ -396,7 +396,7 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
     return response
 
 
-@app.local_entrypoint("compare")
+@app.local_entrypoint(name="compare")
 def compare_models(prompt: str = "Vad anser Riksbanken om inflationen?"):
     """
     Compare base model vs finetuned model outputs.
