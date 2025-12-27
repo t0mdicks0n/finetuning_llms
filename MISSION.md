@@ -183,39 +183,3 @@ Since we're targeting a specific domain (financial/defense Swedish), existing be
 | GGUF conversion fails | llama.cpp integrated into Modal image | ⏳ To test |
 | Continued pre-training degrades instruction-following | Confirmed: model generates reports instead of Q&A | ✅ Documented |
 
----
-
-## 9. Quick Start
-
-```bash
-# Install dependencies
-pipenv install
-
-# Download Riksbanken reports
-python -m src.data.scrape
-
-# Process PDFs to training data
-python -m src.data.process
-
-# Train on Modal (test run - 50 examples, ~$0.50)
-modal run src/train/train.py::main
-
-# Train on Modal (full dataset, ~$1-2)
-modal run src/train/train.py::main --no-test-run
-
-# Compare base vs finetuned model outputs
-modal run src/train/train.py::compare_models
-modal run src/train/train.py::compare_models --prompt "Vad är reporäntan?"
-
-# Export and merge adapters
-modal run src/export/merge.py
-
-# Export with GGUF conversion
-modal run src/export/merge.py --gguf
-
-# Run evaluation suite (perplexity + domain questions)
-modal run src/eval/eval_modal.py --compare
-
-# Quick evaluation (fewer examples)
-modal run src/eval/eval_modal.py --compare --quick
-```
