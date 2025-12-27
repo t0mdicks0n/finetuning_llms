@@ -60,13 +60,14 @@ image = (
     timeout=3600,  # 1 hour max
     volumes={VOLUME_PATH: volume},
 )
-def train(train_data: list[dict], val_data: list[dict] | None = None):
+def train(train_data: list[dict], val_data: list[dict] | None = None, resume_from_checkpoint: bool = False):
     """
     Fine-tune Mistral model on Swedish financial text.
 
     Args:
         train_data: List of training examples with 'text' field.
         val_data: Optional validation data.
+        resume_from_checkpoint: If True, resume from the last checkpoint.
 
     Returns:
         Path to saved adapters.
@@ -173,8 +174,16 @@ def train(train_data: list[dict], val_data: list[dict] | None = None):
         packing=False,  # Disable for small test runs
     )
 
-    # Train
-    trainer.train()
+    # Train (with optional resume)
+    checkpoint_dir = os.path.join(VOLUME_PATH, "checkpoints")
+    last_checkpoint = None
+    if resume_from_checkpoint and os.path.exists(checkpoint_dir):
+        checkpoints = [d for d in os.listdir(checkpoint_dir) if d.startswith("checkpoint-")]
+        if checkpoints:
+            last_checkpoint = os.path.join(checkpoint_dir, sorted(checkpoints)[-1])
+            print(f"Resuming from checkpoint: {last_checkpoint}")
+
+    trainer.train(resume_from_checkpoint=last_checkpoint)
 
     # Save adapters
     adapter_path = os.path.join(VOLUME_PATH, "adapters")
@@ -199,7 +208,7 @@ def train(train_data: list[dict], val_data: list[dict] | None = None):
     timeout=600,
     volumes={VOLUME_PATH: volume},
 )
-def inference(prompt: str, max_new_tokens: int = 256):
+def inference(prompt: str, max_new_tokens: int = 512):
     """
     Run inference with the fine-tuned model.
 
@@ -268,13 +277,14 @@ def inference(prompt: str, max_new_tokens: int = 256):
 
 
 @app.local_entrypoint()
-def main(test_run: bool = True):
+def main(test_run: bool = True, resume: bool = False):
     """
     Main entrypoint - loads data and starts training.
 
     Args:
         test_run: If True, only use 50 examples for a quick test (~$1-2).
                   Set --no-test-run for full training.
+        resume: If True, resume from the last checkpoint.
     """
     import json
     from pathlib import Path
@@ -316,7 +326,9 @@ def main(test_run: bool = True):
 
     # Start training on Modal
     print("\nStarting training on Modal...")
-    result = train.remote(train_data, val_data)
+    if resume:
+        print("Resume mode enabled - will continue from last checkpoint if available")
+    result = train.remote(train_data, val_data, resume_from_checkpoint=resume)
     print(f"\nTraining complete! Adapters saved at: {result}")
 
     # Test inference
@@ -328,3 +340,86 @@ def main(test_run: bool = True):
     print(f"\nPrompt: {test_prompt}")
     response = inference.remote(test_prompt)
     print(f"\nResponse: {response}")
+
+
+@app.function(
+    image=image,
+    gpu="A100",
+    timeout=600,
+    volumes={VOLUME_PATH: volume},
+)
+def inference_base(prompt: str, max_new_tokens: int = 512):
+    """
+    Run inference with the BASE model (no adapters) for comparison.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+    print(f"Loading BASE model: {MODEL_NAME}")
+
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+    )
+
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        quantization_config=bnb_config,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.eos_token
+
+    messages = [{"role": "user", "content": prompt}]
+    formatted = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+
+    inputs = tokenizer(formatted, return_tensors="pt").to("cuda")
+
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=max_new_tokens,
+        temperature=0.7,
+        top_p=0.9,
+        do_sample=True,
+    )
+
+    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    if "[/INST]" in response:
+        response = response.split("[/INST]")[-1].strip()
+
+    return response
+
+
+@app.local_entrypoint("compare")
+def compare_models(prompt: str = "Vad anser Riksbanken om inflationen?"):
+    """
+    Compare base model vs finetuned model outputs.
+
+    Usage:
+        modal run src/train/train.py::compare
+        modal run src/train/train.py::compare --prompt "Vad är reporäntan?"
+    """
+    print("=" * 70)
+    print(" MODEL COMPARISON: Base vs Finetuned")
+    print("=" * 70)
+    print(f"\nPrompt: {prompt}\n")
+
+    print("-" * 70)
+    print("BASE MODEL (Mistral-7B-Instruct-v0.3):")
+    print("-" * 70)
+    base_response = inference_base.remote(prompt)
+    print(base_response)
+
+    print("\n" + "-" * 70)
+    print("FINETUNED MODEL (with Riksbanken adapters):")
+    print("-" * 70)
+    ft_response = inference.remote(prompt)
+    print(ft_response)
+
+    print("\n" + "=" * 70)

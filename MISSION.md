@@ -17,12 +17,12 @@ We are choosing the path of least resistance and maximum performance per dollar.
 
 | Component | Choice | Notes |
 |-----------|--------|-------|
-| Orchestration | Modal | Handles GPU provisioning |
-| Training Framework | Unsloth | 2-5x faster training, 70% less memory |
-| Base Model | Latest Mistral 7B Instruct | Check Unsloth HuggingFace collection for newest quantized version (v0.3+, or Mistral-Nemo if supported) |
-| Data Processing | pymupdf (Fitz) | Fast PDF text extraction |
+| Orchestration | Modal | Handles GPU provisioning (A100) |
+| Training Framework | transformers + PEFT | Standard stack (Unsloth had dependency issues) |
+| Base Model | Mistral-7B-Instruct-v0.3 | 4-bit quantized via bitsandbytes |
+| Data Processing | pymupdf | Fast PDF text extraction |
 
-> **Note:** Do not use old v0.1/v0.2 Mistral versions unless necessary.
+> **Note:** We switched from Unsloth to standard transformers+PEFT due to dependency conflicts in Modal. Training still uses 4-bit quantization via bitsandbytes.
 
 ---
 
@@ -158,24 +158,55 @@ Since we're targeting a specific domain (financial/defense Swedish), existing be
 
 ## 7. Implementation Plan
 
-| Phase | Task | Deliverable |
-|-------|------|-------------|
-| 1 | Project Setup | Directory structure, dependencies, Modal config |
-| 2 | Data Scraper | `src/data/scrape.py` - download 10+ Riksbanken PDFs |
-| 3 | Data Processor | `src/data/process.py` - extract, clean, format to JSONL |
-| 4 | Training Script | `src/train/train.py` - Modal + Unsloth pipeline |
-| 5 | Export/Merge | `src/export/merge.py` - GGUF conversion |
-| 6 | Evaluation | `src/eval/` - benchmarks and domain tests |
-| 7 | Inference Demo | Modal endpoint for testing |
+| Phase | Task | Deliverable | Status |
+|-------|------|-------------|--------|
+| 1 | Project Setup | Directory structure, dependencies, Modal config | ✅ Complete |
+| 2 | Data Pipeline | `src/data/scrape.py` + `process.py` - 15 PDFs, 879 examples | ✅ Complete |
+| 3 | Training Script | `src/train/train.py` - Modal + PEFT/LoRA pipeline | ✅ Complete |
+| 4 | Export/Merge | `src/export/merge.py` - GGUF conversion | ✅ Complete |
+| 5 | Evaluation | `src/eval/` - perplexity, domain eval, EuroEval | ✅ Complete |
+| 6 | Full Training Run | Train on full dataset (not test mode) | ⏳ Pending |
+| 7 | Final Evaluation | Run complete eval suite and document results | ⏳ Pending |
 
 ---
 
 ## 8. Open Questions & Risks
 
-| Risk | Mitigation |
-|------|------------|
-| Insufficient training data from 5 PDFs | Expand to 10+ reports; consider Swedish Wikipedia finance articles as supplement |
-| Unsloth/Modal dependency issues | Test image build early; have fallback to standard transformers if needed |
-| Saab data not publicly available | Focus on Riksbanken; Saab is nice-to-have |
-| No suitable Swedish benchmarks exist | Build simple custom eval (20-50 domain questions) |
-| GGUF conversion fails | Test with smaller model first; ensure llama.cpp compatibility |
+| Risk | Mitigation | Status |
+|------|------------|--------|
+| Insufficient training data from 5 PDFs | Expanded to 15 reports (81 MB raw, 1.8 MB clean text) | ✅ Resolved |
+| Unsloth/Modal dependency issues | Switched to standard transformers+PEFT stack | ✅ Resolved |
+| Saab data not publicly available | Focused on Riksbanken as primary source | ✅ Accepted |
+| No suitable Swedish benchmarks exist | Built custom domain eval + integrated EuroEval | ✅ Resolved |
+| GGUF conversion fails | llama.cpp integrated into Modal image | ⏳ To test |
+| Continued pre-training may degrade instruction-following | Accept for MVP; future work: create Q&A pairs | ⚠️ Known limitation |
+
+---
+
+## 9. Quick Start
+
+```bash
+# Install dependencies
+pipenv install
+
+# Download Riksbanken reports
+python -m src.data.scrape
+
+# Process PDFs to training data
+python -m src.data.process
+
+# Train on Modal (test run - 50 examples)
+modal run src/train/train.py
+
+# Train on Modal (full dataset)
+modal run src/train/train.py --no-test-run
+
+# Export and merge adapters
+modal run src/export/merge.py
+
+# Export with GGUF conversion
+modal run src/export/merge.py --gguf
+
+# Run evaluation
+modal run src/eval/eval_modal.py --compare
+```
