@@ -10,8 +10,17 @@ Usage:
     # Quick test with fewer samples
     modal run src/eval/eval_modal.py --compare --quick
 
-Note: EuroEval benchmark is currently disabled due to dependency conflicts.
-(EuroEval requires accelerate>=1.9.0, but our training stack uses 0.28.0)
+    # Include EuroEval Swedish benchmarks (sentiment, NER, etc.)
+    modal run src/eval/eval_modal.py --compare --include-euroeval
+
+    # Run ONLY EuroEval on base model (~$0.20-0.40 for single task)
+    modal run src/eval/eval_modal.py --euroeval-only --euroeval-task sentiment-classification
+
+    # Run EuroEval on your finetuned model (after pushing to HF)
+    modal run src/eval/eval_modal.py --euroeval-only --euroeval-model your-username/riksbanken-ministral-8b
+
+    # Run all Swedish EuroEval tasks (~$1.25-2.50)
+    modal run src/eval/eval_modal.py --euroeval-only
 """
 
 import modal
@@ -26,28 +35,29 @@ volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
 # Model configuration (must match train.py)
-BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
+# Using BF16 version (unquantized) so we can apply our own 4-bit quantization
+BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
 
 # Build Modal image with eval dependencies
+# Ministral3 requires transformers v5.0+ or main branch for 'ministral3' text model type
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git")  # Required for pip install from GitHub
     .pip_install(
         "numpy<2",
-        "torch==2.2.0",
-        "transformers==4.40.0",
-        "datasets==2.18.0",
-        "accelerate==0.28.0",
-        "peft==0.10.0",
-        "bitsandbytes==0.43.0",
+        "torch>=2.6.0",
+        "git+https://github.com/huggingface/transformers.git",  # Need main branch for ministral3
+        "datasets>=3.0.0",
+        "accelerate>=1.9.0",
+        "peft>=0.14.0",
+        "bitsandbytes>=0.45.0",
         "scipy",
         "sentencepiece",
         "tqdm",
         "rich",
+        "euroeval[all]",
     )
 )
-
-# Note: EuroEval has dependency conflicts with our stack (requires accelerate>=1.9.0)
-# For now, EuroEval is disabled. Use ScandEval directly if needed.
 
 
 # ============================================================================
@@ -486,18 +496,67 @@ def run_comparison(val_texts: list[str], max_texts: int | None = None) -> dict:
     return results
 
 
-def run_euroeval_benchmark(task: str = "sentiment-classification") -> dict:
+@app.function(
+    image=image,
+    gpu="A100",
+    timeout=3600,
+)
+def run_euroeval_benchmark(
+    model_id: str,
+    task: str = "sentiment-classification",
+    language: str = "sv",
+) -> dict:
     """
-    EuroEval benchmark is currently disabled due to dependency conflicts.
+    Run EuroEval benchmark on a model.
 
-    EuroEval requires accelerate>=1.9.0 but our training stack uses accelerate==0.28.0.
-    To run EuroEval, use a separate environment or the standalone euroeval CLI.
+    Args:
+        model_id: HuggingFace model ID to evaluate.
+        task: EuroEval task (e.g., "sentiment-classification", "ner", "linguistic-acceptability").
+        language: Language code (default "sv" for Swedish).
+
+    Returns:
+        Benchmark results.
     """
-    return {
-        "task": task,
-        "status": "disabled",
-        "error": "EuroEval disabled due to dependency conflicts (requires accelerate>=1.9.0)",
-    }
+    from euroeval import Benchmarker
+
+    print(f"Running EuroEval benchmark:")
+    print(f"  Model: {model_id}")
+    print(f"  Task: {task}")
+    print(f"  Language: {language}")
+
+    try:
+        benchmarker = Benchmarker()
+        results = benchmarker.benchmark(
+            model=model_id,
+            task=task,
+            language=language,
+        )
+
+        return {
+            "model": model_id,
+            "task": task,
+            "language": language,
+            "status": "success",
+            "results": results,
+        }
+
+    except Exception as e:
+        return {
+            "model": model_id,
+            "task": task,
+            "language": language,
+            "status": "error",
+            "error": str(e),
+        }
+
+
+# Swedish-specific EuroEval tasks
+SWEDISH_EUROEVAL_TASKS = [
+    "sentiment-classification",  # Sentiment analysis
+    "linguistic-acceptability",  # Grammar/acceptability judgments
+    "ner",                       # Named entity recognition
+    "reading-comprehension",     # Reading comprehension
+]
 
 
 # ============================================================================
@@ -509,6 +568,9 @@ def main(
     compare: bool = True,
     quick: bool = False,
     include_euroeval: bool = False,
+    euroeval_only: bool = False,
+    euroeval_task: str = "",
+    euroeval_model: str = "",
     max_texts: int = 20,
 ):
     """
@@ -518,54 +580,89 @@ def main(
         compare: Compare base vs finetuned model.
         quick: Use fewer examples for faster eval.
         include_euroeval: Include EuroEval benchmark (slower).
+        euroeval_only: Run only EuroEval (skip perplexity/domain eval).
+        euroeval_task: Run specific EuroEval task (e.g., "sentiment-classification").
+        euroeval_model: HuggingFace model ID for EuroEval (default: base model).
         max_texts: Maximum validation texts for perplexity.
     """
     import json
     from pathlib import Path
     from datetime import datetime
 
-    # Load validation data
-    data_dir = Path(__file__).parent.parent.parent / "data" / "processed"
-    val_path = data_dir / "val.jsonl"
+    results = {}
 
-    if not val_path.exists():
-        print("ERROR: Validation data not found!")
-        print(f"Expected: {val_path}")
-        print("Run the data pipeline first.")
-        return
+    # EuroEval-only mode
+    if euroeval_only:
+        print("\n" + "=" * 60)
+        print(" RUNNING EUROEVAL ON MODAL")
+        print("=" * 60)
 
-    print(f"Loading validation data from: {val_path}")
-    val_texts = []
-    with open(val_path, "r", encoding="utf-8") as f:
-        for line in f:
-            data = json.loads(line)
-            val_texts.append(data["text"])
+        model_id = euroeval_model if euroeval_model else BASE_MODEL_NAME
+        print(f"Model: {model_id}")
 
-    print(f"Loaded {len(val_texts)} validation texts")
+        tasks = [euroeval_task] if euroeval_task else SWEDISH_EUROEVAL_TASKS
+        euroeval_results = {}
 
-    if quick:
-        max_texts = min(max_texts, 5)
-        print(f"Quick mode: using {max_texts} texts")
+        for task in tasks:
+            print(f"\nTask: {task}")
+            euroeval_results[task] = run_euroeval_benchmark.remote(
+                model_id=model_id,
+                task=task,
+                language="sv",
+            )
 
-    # Run comparison on Modal
-    print("\n" + "=" * 60)
-    print(" RUNNING EVALUATION ON MODAL")
-    print("=" * 60)
+        results["euroeval"] = euroeval_results
 
-    if compare:
-        results = run_comparison.remote(val_texts, max_texts=max_texts)
     else:
-        # Single model eval
-        results = {
-            "perplexity": evaluate_perplexity.remote(val_texts, use_adapters=True, max_texts=max_texts),
-            "domain": evaluate_domain_questions.remote(use_adapters=True),
-        }
+        # Load validation data for perplexity/domain eval
+        data_dir = Path(__file__).parent.parent.parent / "data" / "processed"
+        val_path = data_dir / "val.jsonl"
 
-    # Run EuroEval if requested
-    if include_euroeval:
-        print("\nNote: EuroEval is currently disabled due to dependency conflicts.")
-        print("(EuroEval requires accelerate>=1.9.0, our stack uses 0.28.0)")
-        results["euroeval"] = run_euroeval_benchmark("sentiment-classification")
+        if not val_path.exists():
+            print("ERROR: Validation data not found!")
+            print(f"Expected: {val_path}")
+            print("Run the data pipeline first.")
+            return
+
+        print(f"Loading validation data from: {val_path}")
+        val_texts = []
+        with open(val_path, "r", encoding="utf-8") as f:
+            for line in f:
+                data = json.loads(line)
+                val_texts.append(data["text"])
+
+        print(f"Loaded {len(val_texts)} validation texts")
+
+        if quick:
+            max_texts = min(max_texts, 5)
+            print(f"Quick mode: using {max_texts} texts")
+
+        # Run comparison on Modal
+        print("\n" + "=" * 60)
+        print(" RUNNING EVALUATION ON MODAL")
+        print("=" * 60)
+
+        if compare:
+            results = run_comparison.remote(val_texts, max_texts=max_texts)
+        else:
+            # Single model eval
+            results = {
+                "perplexity": evaluate_perplexity.remote(val_texts, use_adapters=True, max_texts=max_texts),
+                "domain": evaluate_domain_questions.remote(use_adapters=True),
+            }
+
+        # Run EuroEval if requested
+        if include_euroeval:
+            print("\nRunning EuroEval Swedish benchmarks...")
+            euroeval_results = {}
+            for task in SWEDISH_EUROEVAL_TASKS:
+                print(f"  Task: {task}")
+                euroeval_results[task] = run_euroeval_benchmark.remote(
+                    model_id=BASE_MODEL_NAME,
+                    task=task,
+                    language="sv",
+                )
+            results["euroeval"] = euroeval_results
 
     # Save results
     results_dir = Path(__file__).parent / "results"

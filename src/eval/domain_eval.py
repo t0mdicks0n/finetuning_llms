@@ -13,8 +13,8 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import PeftModel
 
-# Default model configuration
-BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
+# Default model configuration (must match train.py)
+BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
 
 
 @dataclass

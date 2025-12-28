@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Default model
-BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
+# Default model (must match train.py)
+BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
 
 # Swedish tasks to run (subset for faster evaluation)
 SWEDISH_TASKS = [

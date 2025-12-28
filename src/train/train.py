@@ -18,7 +18,8 @@ VOLUME_PATH = "/vol"
 
 # Model configuration - using latest Ministral 3 model (Dec 2025)
 # 256K context, vision capable, Apache 2.0 license
-MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
+# Using BF16 version (unquantized) so we can apply our own 4-bit quantization
+MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
 MAX_SEQ_LENGTH = 4096  # Can go up to 256K but keeping reasonable for training
 
 # LoRA configuration (from MISSION.md)
@@ -36,21 +37,24 @@ NUM_EPOCHS = 1
 BATCH_SIZE = 2  # Reduced for memory
 GRADIENT_ACCUMULATION_STEPS = 8
 
-# Build the Modal image - using stable transformers stack without unsloth
+# Build the Modal image - using transformers from source for Ministral-3-8B (Dec 2025)
+# Ministral3 requires transformers v5.0+ or main branch for 'ministral3' text model type
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git")  # Required for pip install from GitHub
     .pip_install(
         "numpy<2",  # Pin numpy 1.x for torch compatibility
-        "torch==2.2.0",
-        "transformers==4.40.0",
-        "datasets==2.18.0",
-        "accelerate==0.28.0",
-        "peft==0.10.0",
-        "trl==0.8.6",
-        "bitsandbytes==0.43.0",
+        "torch>=2.5.0",
+        "git+https://github.com/huggingface/transformers.git",  # Need main branch for ministral3
+        "datasets>=3.0.0",
+        "accelerate>=1.2.0",
+        "peft>=0.14.0",
+        "trl>=0.12.0",
+        "bitsandbytes>=0.45.0",
         "scipy",
         "sentencepiece",
         "rich",
+        "pillow",  # Required for Mistral3 image processor
     )
 )
 
@@ -76,20 +80,33 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
     import os
     import torch
     from datasets import Dataset
-    from transformers import (
-        AutoModelForCausalLM,
-        AutoTokenizer,
-        BitsAndBytesConfig,
-        TrainingArguments,
-    )
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-    from trl import SFTTrainer
+    from transformers import AutoTokenizer, BitsAndBytesConfig
+    from peft import LoraConfig
+    from trl import SFTTrainer, SFTConfig
 
     print("=" * 60)
     print("Swedish Sovereign AI - Training Pipeline")
     print("=" * 60)
 
-    # Quantization config for 4-bit loading
+    # Prepare dataset - data is in chat/messages format
+    # SFTTrainer auto-applies chat template for 'messages' format
+    print(f"\nPreparing dataset: {len(train_data)} training examples")
+    train_dataset = Dataset.from_list(train_data)
+
+    eval_dataset = None
+    if val_data:
+        print(f"Validation examples: {len(val_data)}")
+        eval_dataset = Dataset.from_list(val_data)
+
+    # Training configuration
+    output_dir = os.path.join(VOLUME_PATH, "checkpoints")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Load the full multimodal model - we'll train on text-only data
+    # The model handles text-only input fine, we just don't pass images
+    print(f"\nLoading model: {MODEL_NAME}")
+    from transformers import Mistral3ForConditionalGeneration
+
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -97,24 +114,19 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
         bnb_4bit_use_double_quant=True,
     )
 
-    # Load model
-    print(f"\nLoading model: {MODEL_NAME}")
-    model = AutoModelForCausalLM.from_pretrained(
+    model = Mistral3ForConditionalGeneration.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
     )
+    print("Loaded multimodal model for text-only training")
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
-    tokenizer.padding_side = "right"
 
-    # Prepare model for k-bit training
-    model = prepare_model_for_kbit_training(model)
-
-    # LoRA configuration
-    print("\nAdding LoRA adapters...")
-    lora_config = LoraConfig(
+    # LoRA configuration - passed to SFTTrainer via peft_config
+    peft_config = LoraConfig(
         r=LORA_R,
         lora_alpha=LORA_ALPHA,
         target_modules=TARGET_MODULES,
@@ -122,30 +134,9 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
         bias="none",
         task_type="CAUSAL_LM",
     )
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
 
-    # Prepare dataset
-    print(f"\nPreparing dataset: {len(train_data)} training examples")
-
-    def format_example(example):
-        """Format text for continued pre-training / causal LM."""
-        return {"text": example["text"]}
-
-    train_dataset = Dataset.from_list(train_data)
-    train_dataset = train_dataset.map(format_example)
-
-    eval_dataset = None
-    if val_data:
-        print(f"Validation examples: {len(val_data)}")
-        eval_dataset = Dataset.from_list(val_data)
-        eval_dataset = eval_dataset.map(format_example)
-
-    # Training configuration
-    output_dir = os.path.join(VOLUME_PATH, "checkpoints")
-    os.makedirs(output_dir, exist_ok=True)
-
-    training_args = TrainingArguments(
+    # SFTConfig with all training args
+    sft_config = SFTConfig(
         output_dir=output_dir,
         num_train_epochs=NUM_EPOCHS,
         per_device_train_batch_size=BATCH_SIZE,
@@ -156,23 +147,24 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
         lr_scheduler_type="cosine",
         logging_steps=5,
         save_strategy="epoch",
-        evaluation_strategy="no",  # Skip eval for test runs
+        eval_strategy="no",
         bf16=True,
         report_to="none",
         gradient_checkpointing=True,
+        # SFT-specific config
+        packing=False,
+        remove_unused_columns=False,  # Keep all columns during processing
     )
 
-    # Create trainer
-    print("\nStarting training...")
+    # Create trainer - pass pre-loaded model and tokenizer
+    print(f"\nStarting training...")
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        args=training_args,
-        dataset_text_field="text",
-        max_seq_length=MAX_SEQ_LENGTH,
-        packing=False,  # Disable for small test runs
+        args=sft_config,
+        peft_config=peft_config,
     )
 
     # Train (with optional resume)
@@ -186,11 +178,10 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
 
     trainer.train(resume_from_checkpoint=last_checkpoint)
 
-    # Save adapters
+    # Save model (adapters) and tokenizer using trainer's save_model
     adapter_path = os.path.join(VOLUME_PATH, "adapters")
     print(f"\nSaving adapters to: {adapter_path}")
-    model.save_pretrained(adapter_path)
-    tokenizer.save_pretrained(adapter_path)
+    trainer.save_model(adapter_path)
 
     # Commit volume changes
     volume.commit()
@@ -222,7 +213,7 @@ def inference(prompt: str, max_new_tokens: int = 512):
     """
     import os
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoTokenizer, BitsAndBytesConfig, Mistral3ForConditionalGeneration
     from peft import PeftModel
 
     adapter_path = os.path.join(VOLUME_PATH, "adapters")
@@ -239,7 +230,8 @@ def inference(prompt: str, max_new_tokens: int = 512):
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    model = AutoModelForCausalLM.from_pretrained(
+    # Load full multimodal model
+    model = Mistral3ForConditionalGeneration.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
@@ -248,7 +240,7 @@ def inference(prompt: str, max_new_tokens: int = 512):
 
     # Load LoRA adapters
     model = PeftModel.from_pretrained(model, adapter_path)
-    tokenizer = AutoTokenizer.from_pretrained(adapter_path)
+    tokenizer = AutoTokenizer.from_pretrained(adapter_path, trust_remote_code=True)
 
     # Format prompt for Mistral Instruct
     messages = [{"role": "user", "content": prompt}]
@@ -290,17 +282,17 @@ def main(test_run: bool = True, resume: bool = False):
     import json
     from pathlib import Path
 
-    # Load training data
+    # Load training data (Q&A instruction format)
     data_dir = Path(__file__).parent.parent.parent / "data" / "processed"
-    train_path = data_dir / "train.jsonl"
-    val_path = data_dir / "val.jsonl"
+    train_path = data_dir / "train_qa.jsonl"
+    val_path = data_dir / "val_qa.jsonl"
 
     if not train_path.exists():
         print("ERROR: Training data not found!")
         print(f"Expected: {train_path}")
         print("Run the data pipeline first:")
         print("  python -m src.data.scrape")
-        print("  python -m src.data.process")
+        print("  python -m src.data.generate_qa")
         return
 
     # Load data
@@ -354,7 +346,7 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
     Run inference with the BASE model (no adapters) for comparison.
     """
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+    from transformers import AutoTokenizer, BitsAndBytesConfig, Mistral3ForConditionalGeneration
 
     print(f"Loading BASE model: {MODEL_NAME}")
 
@@ -364,7 +356,8 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    model = AutoModelForCausalLM.from_pretrained(
+    # Load full multimodal model
+    model = Mistral3ForConditionalGeneration.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
@@ -412,7 +405,7 @@ def compare_models(prompt: str = "Vad anser Riksbanken om inflationen?"):
     print(f"\nPrompt: {prompt}\n")
 
     print("-" * 70)
-    print("BASE MODEL (Mistral-7B-Instruct-v0.3):")
+    print("BASE MODEL (Ministral-3-8B-Instruct-2512):")
     print("-" * 70)
     base_response = inference_base.remote(prompt)
     print(base_response)

@@ -1,6 +1,6 @@
 # Swedish Sovereign AI (MVP)
 
-Fine-tune Mistral-7B to adopt the domain language of Swedish central bank (Riksbanken) monetary policy reports.
+Fine-tune Ministral-8B on Swedish central bank (Riksbanken) monetary policy reports using instruction-tuning with synthetic Q&A data.
 
 ## Results
 
@@ -9,7 +9,7 @@ Fine-tune Mistral-7B to adopt the domain language of Swedish central bank (Riksb
 | **Perplexity** | 6.44 | 3.11 | **-51.7%** |
 | Domain Knowledge | 34.5% | 38.3% | +3.8% |
 
-**Training:** 879 examples, 1 epoch, ~7.5 minutes on A100, ~$2
+**Training:** ~4,000 Q&A pairs, 1 epoch, ~10 minutes on A100, ~$2
 
 > See [RESULTS.md](RESULTS.md) for full analysis.
 
@@ -19,33 +19,52 @@ Fine-tune Mistral-7B to adopt the domain language of Swedish central bank (Riksb
 # Install dependencies
 pipenv install
 
+# Set up environment variables
+cp .env.example .env
+# Edit .env to add: GEMINI_API_KEY, HF_TOKEN
+
 # Download Riksbanken reports
 python -m src.data.scrape
 
-# Process PDFs to training data
-python -m src.data.process
+# Generate Q&A training data using Gemini
+python -m src.data.generate_qa
+
+# (Optional) Push dataset to HuggingFace Hub for versioning
+python -m src.data.push_dataset --dataset-id your-username/riksbanken-qa
 
 # Train on Modal (test run - 50 examples, ~$0.50)
 modal run src/train/train.py::main
 
-# Train on Modal (full dataset, ~$1-2)
+# Train on Modal (full dataset, ~$2)
 modal run src/train/train.py::main --no-test-run
 
 # Compare base vs finetuned model outputs
 modal run src/train/train.py::compare_models
 modal run src/train/train.py::compare_models --prompt "Vad är reporäntan?"
+```
 
-# Export and merge adapters
-modal run src/export/merge.py
+## Push to HuggingFace & Evaluate
 
-# Export with GGUF conversion
+After training, merge adapters and push to HuggingFace Hub:
+
+```bash
+# Create Modal secret for HuggingFace (one-time)
+source .env && modal secret create huggingface-secret HF_TOKEN="$HF_TOKEN"
+
+# Merge LoRA adapters and push to HuggingFace
+modal run src/export/merge.py --push --repo-id your-username/riksbanken-ministral-8b
+
+# Run EuroEval Swedish benchmarks on your model
+modal run src/eval/eval_modal.py --euroeval-only --euroeval-model your-username/riksbanken-ministral-8b
+
+# Or run single task for quick test (~$0.20-0.40)
+modal run src/eval/eval_modal.py --euroeval-only --euroeval-task sentiment-classification
+
+# Export to GGUF for local inference
 modal run src/export/merge.py --gguf
 
-# Run evaluation suite (perplexity + domain questions)
+# Run perplexity + domain evaluation
 modal run src/eval/eval_modal.py --compare
-
-# Quick evaluation (fewer examples)
-modal run src/eval/eval_modal.py --compare --quick
 ```
 
 ## Prerequisites
@@ -53,6 +72,8 @@ modal run src/eval/eval_modal.py --compare --quick
 - Python 3.11+
 - [pipenv](https://pipenv.pypa.io/en/latest/)
 - [Modal](https://modal.com/) account with API key
+- [HuggingFace](https://huggingface.co/) account with write token (for pushing models)
+- [Google AI Studio](https://aistudio.google.com/apikey) API key (for Q&A generation)
 
 ## Installation
 
@@ -67,10 +88,22 @@ cd finetuning_llms
 pipenv install
 ```
 
-3. Install and authenticate Modal CLI:
+3. Set up environment variables:
 ```bash
+cp .env.example .env
+# Edit .env to add your API keys:
+# - GEMINI_API_KEY (for Q&A generation)
+# - HF_TOKEN (for pushing models to HuggingFace)
+```
+
+4. Authenticate CLI tools:
+```bash
+# Modal
 pip install modal
 modal token new
+
+# HuggingFace
+pipenv run huggingface-cli login
 ```
 
 ## Project Structure

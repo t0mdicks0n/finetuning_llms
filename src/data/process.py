@@ -138,25 +138,43 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVE
     return chunks
 
 
-def create_training_examples(chunks: list[str], source: str) -> list[dict]:
+# Instruction prompts for chat-formatted training
+INSTRUCTION_PROMPTS = [
+    "Du är en Riksbanken-analytiker. Skriv en analys av den penningpolitiska situationen.",
+    "Analysera den svenska ekonomin ur ett centralbanks-perspektiv.",
+    "Skriv ett avsnitt till en penningpolitisk rapport.",
+    "Beskriv inflationsutvecklingen och penningpolitiska överväganden.",
+    "Ge en ekonomisk analys i Riksbankens stil.",
+]
+
+
+def create_training_examples(chunks: list[str], source: str, use_chat_format: bool = True) -> list[dict]:
     """
     Create training examples from text chunks.
-
-    For continued pre-training, we just need the text.
-    Format: {"text": "...", "source": "..."}
 
     Args:
         chunks: List of text chunks.
         source: Source document identifier.
+        use_chat_format: If True, wrap in Mistral chat template.
 
     Returns:
         List of training examples.
     """
+    import random
+
     examples = []
 
     for i, chunk in enumerate(chunks):
+        if use_chat_format:
+            # Pick a random instruction prompt
+            instruction = random.choice(INSTRUCTION_PROMPTS)
+            # Format as Mistral chat template
+            text = f"<s>[INST] {instruction} [/INST] {chunk}</s>"
+        else:
+            text = chunk
+
         example = {
-            "text": chunk,
+            "text": text,
             "source": source,
             "chunk_id": i,
         }

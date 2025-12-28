@@ -23,8 +23,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Default configuration
-BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
+# Default configuration (must match train.py)
+BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
 RESULTS_DIR = Path(__file__).parent / "results"
 
 

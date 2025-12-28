@@ -27,18 +27,20 @@ volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
 # Base model (must match training)
-BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512"
+# Using BF16 version (unquantized) so we can apply our own 4-bit quantization
+BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
 
 # Build image with llama.cpp for GGUF conversion
+# Ministral3 requires transformers v5.0+ or main branch for 'ministral3' text model type
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git", "cmake", "build-essential")
     .pip_install(
         "numpy<2",
-        "torch==2.2.0",
-        "transformers==4.40.0",
-        "accelerate==0.28.0",
-        "peft==0.10.0",
+        "torch>=2.5.0",
+        "git+https://github.com/huggingface/transformers.git",  # Need main branch for ministral3
+        "accelerate>=1.2.0",
+        "peft>=0.14.0",
         "sentencepiece",
         "huggingface_hub",
     )
@@ -56,6 +58,7 @@ image = (
     gpu="A100",
     timeout=3600,
     volumes={VOLUME_PATH: volume},
+    secrets=[modal.Secret.from_name("huggingface-secret", required=False)],
 )
 def merge_adapters(
     output_name: str = "merged",
@@ -120,9 +123,19 @@ def merge_adapters(
 
     # Push to Hub if requested
     if push_to_hub and hub_repo_id:
+        import os
+        from huggingface_hub import login
+
+        hf_token = os.environ.get("HF_TOKEN")
+        if not hf_token:
+            print("WARNING: HF_TOKEN not set. Create Modal secret first:")
+            print("  modal secret create huggingface-secret HF_TOKEN=hf_your_token")
+            return output_path
+
+        login(token=hf_token)
         print(f"\nPushing to Hugging Face Hub: {hub_repo_id}")
-        model.push_to_hub(hub_repo_id)
-        tokenizer.push_to_hub(hub_repo_id)
+        model.push_to_hub(hub_repo_id, private=False)
+        tokenizer.push_to_hub(hub_repo_id, private=False)
         print(f"Successfully pushed to: https://huggingface.co/{hub_repo_id}")
 
     return output_path

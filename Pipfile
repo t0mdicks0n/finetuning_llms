@@ -28,6 +28,9 @@ tqdm = ">=4.66.0"
 python-dotenv = ">=1.0.0"
 huggingface-hub = ">=0.24.0"
 
+# Q&A generation
+google-generativeai = "*"
+
 [dev-packages]
 pytest = ">=8.0.0"
 black = ">=24.0.0"
