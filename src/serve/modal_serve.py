@@ -1,8 +1,8 @@
 """
-Modal vLLM server for Swedish Sovereign AI.
+Modal inference server for Swedish Sovereign AI.
 
-Serves both vanilla and LoRA fine-tuned Ministral-8B from a single vLLM instance
-with dynamic adapter switching per request. Supports multi-turn conversations.
+Serves both vanilla and LoRA fine-tuned Mistral-7B with dynamic adapter switching
+per request. Supports multi-turn conversations.
 
 Usage:
     # Deploy (creates persistent endpoint)
@@ -12,7 +12,7 @@ Usage:
     modal serve src/serve/modal_serve.py
 
     # Test the endpoint
-    curl -X POST https://your-app--vllm-serve.modal.run/chat \
+    curl -X POST https://your-app--inference-server-chat.modal.run \
       -H "Content-Type: application/json" \
       -d '{
         "messages": [
@@ -35,23 +35,26 @@ VOLUME_PATH = "/vol"
 ADAPTER_PATH = "/vol/adapters"
 
 # Model configuration - must match training (src/train/train.py)
-# Ministral 3 model (Dec 2025) - 256K context, Apache 2.0 license
-BASE_MODEL = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
+# Using stable Mistral-7B-Instruct-v0.3 (text-only model)
+BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
-# GPU configuration - A10G has 24GB, sufficient for 8B model + LoRA
+# GPU configuration - A10G has 24GB, sufficient for 7B model + LoRA
 GPU_TYPE = "A10G"
 
-# Build Modal image with vLLM and FastAPI
+# Build Modal image - matching training setup
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "vllm>=0.6.4",
+        "numpy<2",
+        "torch>=2.5.0",
+        "transformers>=4.36.0",  # Stable release, Mistral-7B fully supported
+        "accelerate>=1.2.0",
+        "peft>=0.14.0",
+        "bitsandbytes>=0.45.0",
         "fastapi[standard]",
         "pydantic>=2.0",
+        "sentencepiece",
     )
-    .env({
-        "HF_HUB_ENABLE_HF_TRANSFER": "1",  # Fast model downloads
-    })
 )
 
 
@@ -60,21 +63,22 @@ image = (
     gpu=GPU_TYPE,
     timeout=600,
     volumes={VOLUME_PATH: volume},
-    container_idle_timeout=300,  # 5 min idle before scale down
-    allow_concurrent_inputs=10,  # Handle multiple requests
+    scaledown_window=300,  # 5 min idle before scale down
 )
-class VLLMServer:
-    """vLLM server with LoRA hot-switching capability."""
+@modal.concurrent(max_inputs=10)
+class InferenceServer:
+    """Inference server with LoRA switching capability."""
 
     @modal.enter()
-    def start_engine(self):
-        """Initialize vLLM engine on container start."""
+    def load_models(self):
+        """Load base model and optionally LoRA adapters on container start."""
         import os
-        from vllm import LLM
-        from transformers import AutoTokenizer
+        import torch
+        from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+        from peft import PeftModel
 
         print("=" * 60)
-        print("Starting vLLM Engine")
+        print("Starting Inference Server")
         print("=" * 60)
 
         # Check if LoRA adapters exist
@@ -85,27 +89,73 @@ class VLLMServer:
             print(f"WARNING: No LoRA adapters at {ADAPTER_PATH}")
             print("Fine-tuned model will not be available.")
 
-        # Initialize vLLM with LoRA support
+        # Load base model with 4-bit quantization (same as training)
         print(f"\nLoading base model: {BASE_MODEL}")
-        self.engine = LLM(
-            model=BASE_MODEL,
-            enable_lora=self.lora_available,
-            max_lora_rank=16,  # Must match training LORA_R
-            max_model_len=4096,
-            trust_remote_code=True,
-            gpu_memory_utilization=0.9,
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
         )
 
-        # Load tokenizer for chat template
-        self.tokenizer = AutoTokenizer.from_pretrained(
+        self.base_model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL,
-            trust_remote_code=True,
+            quantization_config=bnb_config,
+            device_map="auto",
         )
+        print("Loaded Mistral-7B-Instruct model")
 
-        print("\nvLLM engine ready!")
+        # Load tokenizer
+        self.tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Load finetuned model with LoRA adapters if available
+        if self.lora_available:
+            print(f"\nLoading LoRA adapters from: {ADAPTER_PATH}")
+            # Need to load a fresh base model for the finetuned version
+            base_model_ft = AutoModelForCausalLM.from_pretrained(
+                BASE_MODEL,
+                quantization_config=bnb_config,
+                device_map="auto",
+            )
+            self.finetuned_model = PeftModel.from_pretrained(base_model_ft, ADAPTER_PATH)
+            self.finetuned_model.eval()
+            print("LoRA adapters loaded successfully")
+
+        self.base_model.eval()
+        print("\nInference server ready!")
         print("=" * 60)
 
-    @modal.web_endpoint(method="POST")
+    def generate(self, model, messages: list, max_tokens: int = 512, temperature: float = 0.7) -> str:
+        """Generate response from a model given messages."""
+        import torch
+
+        # Apply chat template to full conversation
+        formatted_prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to("cuda")
+        input_length = inputs["input_ids"].shape[1]
+
+        with torch.no_grad():
+            outputs = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id,
+            )
+
+        # Only decode the newly generated tokens (skip the input prompt)
+        generated_tokens = outputs[0][input_length:]
+        response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+        return response.strip()
+
+    @modal.fastapi_endpoint(method="POST")
     def chat(self, request: dict) -> dict:
         """
         Chat endpoint with vanilla/finetuned switching.
@@ -129,9 +179,6 @@ class VLLMServer:
                 "model": "vanilla" | "finetuned"
             }
         """
-        from vllm import SamplingParams
-        from vllm.lora.request import LoRARequest
-
         # Parse request
         messages = request.get("messages", [])
         use_finetuned = request.get("use_finetuned", False)
@@ -148,51 +195,25 @@ class VLLMServer:
             if msg["role"] not in ("user", "assistant", "system"):
                 return {"error": f"Invalid role: {msg['role']}", "model": None}
 
-        # Apply Mistral chat template to full conversation
-        formatted_prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-
-        # Sampling parameters
-        sampling_params = SamplingParams(
-            temperature=temperature,
-            max_tokens=max_tokens,
-            top_p=0.9,
-        )
-
-        # Generate with or without LoRA
+        # Select model
         if use_finetuned and self.lora_available:
-            lora_request = LoRARequest(
-                lora_name="riksbanken",
-                lora_int_id=1,
-                lora_path=ADAPTER_PATH,
-            )
-            outputs = self.engine.generate(
-                [formatted_prompt],
-                sampling_params,
-                lora_request=lora_request,
-            )
+            model = self.finetuned_model
             model_type = "finetuned"
         else:
-            outputs = self.engine.generate(
-                [formatted_prompt],
-                sampling_params,
-            )
+            model = self.base_model
             model_type = "vanilla"
             if use_finetuned and not self.lora_available:
                 model_type = "vanilla (finetuned unavailable)"
 
-        # Extract response text
-        response_text = outputs[0].outputs[0].text
+        # Generate response
+        response_text = self.generate(model, messages, max_tokens, temperature)
 
         return {
             "response": response_text,
             "model": model_type,
         }
 
-    @modal.web_endpoint(method="GET")
+    @modal.fastapi_endpoint(method="GET")
     def health(self) -> dict:
         """Health check endpoint."""
         return {
@@ -207,7 +228,7 @@ class VLLMServer:
 def main():
     """Test the server locally."""
     print("=" * 60)
-    print("Swedish Sovereign AI - vLLM Server")
+    print("Swedish Sovereign AI - Inference Server")
     print("=" * 60)
     print("\nTo deploy:")
     print("  modal deploy src/serve/modal_serve.py")
