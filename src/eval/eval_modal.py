@@ -35,20 +35,18 @@ volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
 # Model configuration (must match train.py)
-# Using BF16 version (unquantized) so we can apply our own 4-bit quantization
-BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
+# Using stable Mistral-7B-Instruct-v0.3 (text-only model, no multimodal issues)
+BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # Build Modal image with eval dependencies
-# Ministral3 requires transformers v5.0+ or main branch for 'ministral3' text model type
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")  # Required for pip install from GitHub
     .pip_install(
         "numpy<2",
-        "torch>=2.6.0",
-        "git+https://github.com/huggingface/transformers.git",  # Need main branch for ministral3
+        "torch>=2.5.0",
+        "transformers>=4.36.0",  # Stable release
         "datasets>=3.0.0",
-        "accelerate>=1.9.0",
+        "accelerate>=1.2.0",
         "peft>=0.14.0",
         "bitsandbytes>=0.45.0",
         "scipy",
@@ -140,10 +138,9 @@ def load_model_internal(adapter_path: str | None = None):
         BASE_MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
-        trust_remote_code=True,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
 
     if adapter_path:

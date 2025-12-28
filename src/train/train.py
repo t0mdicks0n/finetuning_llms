@@ -16,11 +16,11 @@ app = modal.App("swedish-sovereign-ai")
 volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
-# Model configuration - using latest Ministral 3 model (Dec 2025)
-# 256K context, vision capable, Apache 2.0 license
-# Using BF16 version (unquantized) so we can apply our own 4-bit quantization
-MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
-MAX_SEQ_LENGTH = 4096  # Can go up to 256K but keeping reasonable for training
+# Model configuration - using Mistral-7B-Instruct-v0.3 (stable text-only model)
+# Note: Ministral-3-8B is multimodal and causes LoRA corruption issues
+# See docs/MINISTRAL3_MULTIMODALITY_ISSUE.md for details
+MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
+MAX_SEQ_LENGTH = 4096  # 32K context available, but 4K is sufficient for Q&A
 
 # LoRA configuration (from MISSION.md)
 LORA_R = 16
@@ -37,15 +37,13 @@ NUM_EPOCHS = 1
 BATCH_SIZE = 2  # Reduced for memory
 GRADIENT_ACCUMULATION_STEPS = 8
 
-# Build the Modal image - using transformers from source for Ministral-3-8B (Dec 2025)
-# Ministral3 requires transformers v5.0+ or main branch for 'ministral3' text model type
+# Build the Modal image - standard dependencies for Mistral-7B
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("git")  # Required for pip install from GitHub
     .pip_install(
         "numpy<2",  # Pin numpy 1.x for torch compatibility
         "torch>=2.5.0",
-        "git+https://github.com/huggingface/transformers.git",  # Need main branch for ministral3
+        "transformers>=4.36.0",  # Stable release, Mistral-7B fully supported
         "datasets>=3.0.0",
         "accelerate>=1.2.0",
         "peft>=0.14.0",
@@ -54,7 +52,6 @@ image = (
         "scipy",
         "sentencepiece",
         "rich",
-        "pillow",  # Required for Mistral3 image processor
     )
 )
 
@@ -102,10 +99,9 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
     output_dir = os.path.join(VOLUME_PATH, "checkpoints")
     os.makedirs(output_dir, exist_ok=True)
 
-    # Load the full multimodal model - we'll train on text-only data
-    # The model handles text-only input fine, we just don't pass images
+    # Load Mistral-7B text-only model
     print(f"\nLoading model: {MODEL_NAME}")
-    from transformers import Mistral3ForConditionalGeneration
+    from transformers import AutoModelForCausalLM
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -114,13 +110,12 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
         bnb_4bit_use_double_quant=True,
     )
 
-    model = Mistral3ForConditionalGeneration.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
-        trust_remote_code=True,
     )
-    print("Loaded multimodal model for text-only training")
+    print("Loaded Mistral-7B-Instruct model")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
@@ -213,7 +208,7 @@ def inference(prompt: str, max_new_tokens: int = 512):
     """
     import os
     import torch
-    from transformers import AutoTokenizer, BitsAndBytesConfig, Mistral3ForConditionalGeneration
+    from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
     from peft import PeftModel
 
     adapter_path = os.path.join(VOLUME_PATH, "adapters")
@@ -230,17 +225,16 @@ def inference(prompt: str, max_new_tokens: int = 512):
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    # Load full multimodal model
-    model = Mistral3ForConditionalGeneration.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
-        trust_remote_code=True,
     )
 
     # Load LoRA adapters
     model = PeftModel.from_pretrained(model, adapter_path)
-    tokenizer = AutoTokenizer.from_pretrained(adapter_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    tokenizer.pad_token = tokenizer.eos_token
 
     # Format prompt for Mistral Instruct
     messages = [{"role": "user", "content": prompt}]
@@ -251,6 +245,7 @@ def inference(prompt: str, max_new_tokens: int = 512):
     )
 
     inputs = tokenizer(formatted, return_tensors="pt").to("cuda")
+    input_length = inputs["input_ids"].shape[1]
 
     outputs = model.generate(
         **inputs,
@@ -260,11 +255,9 @@ def inference(prompt: str, max_new_tokens: int = 512):
         do_sample=True,
     )
 
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-    # Extract just the assistant response
-    if "[/INST]" in response:
-        response = response.split("[/INST]")[-1].strip()
+    # Only decode the newly generated tokens (skip the input prompt)
+    generated_tokens = outputs[0][input_length:]
+    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
     return response
 
@@ -346,7 +339,7 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
     Run inference with the BASE model (no adapters) for comparison.
     """
     import torch
-    from transformers import AutoTokenizer, BitsAndBytesConfig, Mistral3ForConditionalGeneration
+    from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
     print(f"Loading BASE model: {MODEL_NAME}")
 
@@ -356,14 +349,12 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
         bnb_4bit_compute_dtype=torch.bfloat16,
     )
 
-    # Load full multimodal model
-    model = Mistral3ForConditionalGeneration.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         quantization_config=bnb_config,
         device_map="auto",
-        trust_remote_code=True,
     )
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
 
     messages = [{"role": "user", "content": prompt}]
@@ -374,6 +365,7 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
     )
 
     inputs = tokenizer(formatted, return_tensors="pt").to("cuda")
+    input_length = inputs["input_ids"].shape[1]
 
     outputs = model.generate(
         **inputs,
@@ -383,9 +375,9 @@ def inference_base(prompt: str, max_new_tokens: int = 512):
         do_sample=True,
     )
 
-    response = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    if "[/INST]" in response:
-        response = response.split("[/INST]")[-1].strip()
+    # Only decode the newly generated tokens (skip the input prompt)
+    generated_tokens = outputs[0][input_length:]
+    response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
     return response
 
@@ -405,7 +397,7 @@ def compare_models(prompt: str = "Vad anser Riksbanken om inflationen?"):
     print(f"\nPrompt: {prompt}\n")
 
     print("-" * 70)
-    print("BASE MODEL (Ministral-3-8B-Instruct-2512):")
+    print("BASE MODEL (Mistral-7B-Instruct-v0.3):")
     print("-" * 70)
     base_response = inference_base.remote(prompt)
     print(base_response)

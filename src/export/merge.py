@@ -27,18 +27,17 @@ volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 
 # Base model (must match training)
-# Using BF16 version (unquantized) so we can apply our own 4-bit quantization
-BASE_MODEL_NAME = "mistralai/Ministral-3-8B-Instruct-2512-BF16"
+# Using stable Mistral-7B-Instruct-v0.3 (text-only model)
+BASE_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # Build image with llama.cpp for GGUF conversion
-# Ministral3 requires transformers v5.0+ or main branch for 'ministral3' text model type
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("git", "cmake", "build-essential")
     .pip_install(
         "numpy<2",
         "torch>=2.5.0",
-        "git+https://github.com/huggingface/transformers.git",  # Need main branch for ministral3
+        "transformers>=4.36.0",  # Stable release
         "accelerate>=1.2.0",
         "peft>=0.14.0",
         "sentencepiece",
@@ -97,10 +96,9 @@ def merge_adapters(
         BASE_MODEL_NAME,
         torch_dtype=torch.float16,
         device_map="auto",
-        trust_remote_code=True,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_NAME)
     tokenizer.pad_token = tokenizer.eos_token
 
     # Load and merge adapters
@@ -260,7 +258,6 @@ def test_merged_model(prompt: str = "Vad är reporäntan?") -> str:
         model_path,
         torch_dtype=torch.float16,
         device_map="auto",
-        trust_remote_code=True,
     )
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
