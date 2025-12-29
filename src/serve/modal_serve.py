@@ -63,7 +63,7 @@ image = (
     gpu=GPU_TYPE,
     timeout=600,
     volumes={VOLUME_PATH: volume},
-    scaledown_window=300,  # 5 min idle before scale down
+    scaledown_window=600,  # 10 min idle before scale down
 )
 @modal.concurrent(max_inputs=10)
 class InferenceServer:

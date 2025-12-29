@@ -116,7 +116,7 @@ for example in dataset["train"]:
 
 This dataset was created for fine-tuning Ministral-8B on Swedish monetary policy domain knowledge.
 
-See the [Swedish Sovereign AI](https://github.com/odin-labs/finetuning_llms) project for training code.
+See the [Finetuning LLMs](https://github.com/t0mdicks0n/finetuning_llms) project for training code.
 
 ## Generation
 
