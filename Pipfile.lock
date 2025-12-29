@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "6d165a1629c31d8d96eaf78e1b3caa1cc05ad6b2ea378e1513a7ef84f02d82cb"
+            "sha256": "38bf5df9a85ae5b2c599e8e8d952bb74aa1805da60ff95cf9230ee1a0978b92a"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -561,6 +561,15 @@
             ],
             "markers": "python_version >= '3.9'",
             "version": "==2025.10.0"
+        },
+        "ftfy": {
+            "hashes": [
+                "sha256:7c70eb532015cd2f9adb53f101fb6c7945988d023a085d127d1573dc49dd0083",
+                "sha256:9b3c3d90f84fb267fe64d375a07b7f8912d817cf86009ae134aa03e1819506ec"
+            ],
+            "index": "pypi",
+            "markers": "python_version >= '3.9'",
+            "version": "==6.3.1"
         },
         "google-ai-generativelanguage": {
             "hashes": [
@@ -2301,6 +2310,14 @@
             ],
             "markers": "python_version >= '3.9'",
             "version": "==1.1.1"
+        },
+        "wcwidth": {
+            "hashes": [
+                "sha256:4d478375d31bc5395a3c55c40ccdf3354688364cd61c4f6adacaa9215d0b3605",
+                "sha256:a7bb560c8aee30f9957e5f9895805edd20602f2d7f720186dfd906e82b4982e1"
+            ],
+            "markers": "python_version >= '3.6'",
+            "version": "==0.2.14"
         },
         "xxhash": {
             "hashes": [

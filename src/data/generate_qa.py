@@ -139,20 +139,34 @@ def chunk_paragraphs(paragraphs: list[str]) -> list[str]:
 
 
 QA_GENERATION_PROMPT = """
-Du är en expert på svensk penningpolitik och Riksbankens arbete.
+Du är en kunnig och pedagogisk expert på svensk penningpolitik, Riksbankens arbete och ekonomi i allmänhet.
+Du svarar som en hjälpsam assistent som vill att läsaren verkligen ska förstå ämnet i ett bredare sammanhang.
+
 Baserat på följande text från en Riksbanken-rapport, generera 3-5 högkvalitativa fråga-svar-par på svenska.
 
-VIKTIGT - Generera OLIKA frågetyper:
-1. Faktafråga - konkreta fakta (vad, när, hur mycket, vilken nivå)
+VIKTIGT - Generera OLIKA frågetyper (minst en av varje typ):
+1. Faktafråga - konkreta fakta med specifika siffror eller nivåer (t.ex. "Vilken nivå...", "Hur mycket...")
 2. Förklaringsfråga - förklara koncept eller samband (varför, hur fungerar, vad innebär)
-3. Analysfråga - tolkning och konsekvenser (vad betyder detta för, vilka effekter)
-4. Jämförelsefråga - jämför med tidigare/annat (hur skiljer sig, jämfört med)
+3. Analysfråga - tolkning och konsekvenser för hushåll/företag/samhället (vad betyder detta för...)
+4. Jämförelsefråga - jämför med andra länder, tidigare perioder, eller relaterade koncept (hur skiljer sig..., jämfört med...)
+
+KRAV på frågorna:
+- Frågor ska vara sådana som en verklig användare skulle ställa till en ekonomiexpert
+- Fokusera på generaliserbar kunskap om penningpolitik, ekonomi och finansmarknader
+- Koppla gärna Riksbankens arbete till bredare ekonomiska koncept (t.ex. hur påverkar detta bostadsmarknaden, kronkursen, sparande)
+- UNDVIK frågor om "texten", "dokumentet", "rapporten", "avsnittet" eller "nästa sida"
+- UNDVIK frågor om dokumentstruktur, layout eller hänvisningar
+- Frågor ska kunna besvaras utan tillgång till källdokumentet
 
 KRAV på svaren:
-- Informativa och kompletta (2-4 meningar)
-- Använd Riksbankens formella ton och terminologi
-- Basera på texten men formulera naturligt (inte ordagranna citat)
-- Inkludera relevanta siffror och specifika detaljer när möjligt
+- Utförliga och pedagogiska (8-12 meningar, cirka 200-300 ord)
+- Ge bakgrund och kontext - förklara HUR saker hänger ihop, inte bara VAD
+- Förklara på ett tillgängligt sätt, som om du hjälper någon verkligen förstå ett komplext ämne
+- Inkludera konkreta siffror, årtal och exempel när möjligt (t.ex. "när inflationen var 10% under 2022...")
+- Koppla till praktiska konsekvenser för vanliga människor (hushåll, låntagare, sparare, företag)
+- Sätt in svensk kontext där relevant (t.ex. Sveriges bostadsmarknad, kronans utveckling, svensk exportindustri)
+- Avsluta med en sammanfattande mening om vad detta innebär i praktiken
+- Svara som om du är en expert som förklarar, UTAN att referera till någon specifik text eller dokument
 
 TEXT:
 {chunk}
@@ -257,8 +271,8 @@ def process_all_pdfs(max_chunks: int | None = None, dry_run: bool = False) -> li
     print("\nGenerating Q&A pairs with Gemini 2.0 Flash...")
     all_examples = []
 
-    # Use ThreadPoolExecutor for parallel API calls (limit to 5 concurrent)
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    # Use ThreadPoolExecutor for parallel API calls (10 concurrent, safe for Gemini pay-as-you-go)
+    with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {
             executor.submit(generate_qa_for_chunk_wrapper, args): args
             for args in all_chunks
