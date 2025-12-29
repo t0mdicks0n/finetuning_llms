@@ -162,6 +162,7 @@ class InferenceServer:
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=0.9,
+            stop=["[INST]", "</s>"],  # Stop when model tries to generate new turn
         )
 
         # Select model (with or without LoRA)
