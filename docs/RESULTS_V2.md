@@ -173,6 +173,30 @@ Create targeted examples that explicitly contrast similar terms:
 Add examples where model should acknowledge limitations:
 - "Jag är specialiserad på svensk penningpolitik. För frågor om Japan, använd en allmän assistent."
 
+### 5. Self-Routing via Training Data
+
+Train the model to recognize out-of-domain questions and respond gracefully, rather than hallucinating. This creates a "built-in router" without additional infrastructure.
+
+**Example training pairs:**
+
+```json
+{"messages": [
+  {"role": "user", "content": "Vilken är huvudstaden i Japan?"},
+  {"role": "assistant", "content": "Jag är specialiserad på svensk penningpolitik och Riksbankens verksamhet. För allmänna frågor om geografi rekommenderar jag en generell assistent. Finns det något om svensk ekonomi eller Riksbanken jag kan hjälpa dig med?"}
+]}
+
+{"messages": [
+  {"role": "user", "content": "Vad är fotosyntesen?"},
+  {"role": "assistant", "content": "Min expertis ligger inom svensk penningpolitik, inte biologi. Jag kan däremot svara på frågor om inflation, räntor, eller Riksbankens beslut. Vill du veta mer om något av dessa ämnen?"}
+]}
+```
+
+**Benefits:**
+- Single model, no external router needed
+- Graceful degradation instead of confident hallucination
+- Can still redirect users to domain-relevant topics
+- No added latency from classification step
+
 ---
 
 ## Artifacts
