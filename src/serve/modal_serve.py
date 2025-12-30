@@ -53,7 +53,7 @@ def download_model():
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "vllm>=0.6.0",
+        "vllm>=0.6.0",  # Let it install latest - crashes sometimes but recovers
         "fastapi[standard]",
         "pydantic>=2.0",
         "huggingface_hub",
@@ -68,9 +68,8 @@ image = (
     timeout=600,
     volumes={VOLUME_PATH: volume},
     scaledown_window=600,  # 10 min idle before scale down
+    max_containers=1,  # Limit to 1 container to prevent runaway scaling
 )
-# No @modal.concurrent - each container handles one request at a time
-# Modal will spin up more containers for concurrent requests
 class InferenceServer:
     """vLLM inference server with LoRA switching capability."""
 
