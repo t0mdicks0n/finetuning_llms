@@ -407,7 +407,7 @@ def main():
     print("Done! Next steps:")
     print("  1. Review generated Q&A: head data/processed/train_qa.jsonl")
     print("  2. Update train.py to use train_qa.jsonl")
-    print("  3. Retrain: modal run src/train/train.py")
+    print("  3. Retrain: modal run src/models/riksbanken/train.py")
     print("=" * 60)
 
 

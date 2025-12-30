@@ -33,14 +33,14 @@ python -m src.data.generate_qa
 python -m src.data.push_dataset --dataset-id your-username/riksbanken-qa
 
 # Train on Modal (test run - 50 examples, ~$0.50)
-modal run src/train/train.py::main
+modal run src/models/riksbanken/train.py::main
 
 # Train on Modal (full dataset, ~$2)
-modal run src/train/train.py::main --no-test-run
+modal run src/models/riksbanken/train.py::main --no-test-run
 
 # Compare base vs finetuned model outputs
-modal run src/train/train.py::compare_models
-modal run src/train/train.py::compare_models --prompt "Vad är reporäntan?"
+modal run src/models/riksbanken/train.py::compare
+modal run src/models/riksbanken/train.py::compare --prompt "Vad är reporäntan?"
 ```
 
 ## Push to HuggingFace & Evaluate
@@ -115,7 +115,10 @@ finetuning_llms/
 │   └── processed/      # Cleaned JSONL training data (879 examples)
 ├── src/
 │   ├── data/           # Scraper & text processor
-│   ├── train/          # Modal + PEFT/LoRA training pipeline
+│   ├── models/         # Model-specific code
+│   │   ├── riksbanken/ # Main LLM training (Modal + PEFT/LoRA)
+│   │   └── router/     # Semantic router for model selection
+│   ├── serve/          # Inference server
 │   ├── export/         # GGUF merge/export scripts
 │   └── eval/           # Evaluation (perplexity, domain questions)
 └── docs/               # Documentation (dated)

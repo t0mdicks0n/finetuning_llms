@@ -32,7 +32,7 @@ volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
 ADAPTER_PATH = "/vol/adapters"
 
-# Model configuration - must match training (src/train/train.py)
+# Model configuration - must match training (src/models/riksbanken/train.py)
 BASE_MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # LoRA adapter name for vLLM
