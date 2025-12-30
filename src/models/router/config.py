@@ -22,5 +22,5 @@ RIKSBANKEN_EXAMPLES_PATH = "data/router/riksbanken_examples.jsonl"
 GENERAL_EXAMPLES_PATH = "data/router/general_examples.jsonl"
 TEST_EXAMPLES_PATH = "data/router/test_examples.jsonl"
 
-# Artifacts
-ROUTER_ARTIFACT_PATH = "artifacts/router/semantic_router.pkl"
+# Artifacts (JSON format - router is reconstructed at load time)
+ROUTER_ARTIFACT_PATH = "artifacts/router/semantic_router.json"

@@ -162,18 +162,65 @@ def evaluate_router(router) -> dict:
     }
 
 
-def save_router(router, path: Path):
-    """Save router to pickle file."""
+def save_router_data(path: Path):
+    """
+    Save router training data to JSON file.
+
+    The SemanticRouter object can't be pickled, so we save the route examples
+    and reconstruct the router at load time.
+    """
+    riksbanken_path = PROJECT_ROOT / RIKSBANKEN_EXAMPLES_PATH
+    general_path = PROJECT_ROOT / GENERAL_EXAMPLES_PATH
+
+    data = {
+        "encoder_model": ENCODER_MODEL,
+        "routes": {}
+    }
+
+    if riksbanken_path.exists():
+        data["routes"][ROUTE_RIKSBANKEN] = load_examples(riksbanken_path)
+
+    if general_path.exists():
+        data["routes"][ROUTE_GENERAL] = load_examples(general_path)
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(router, f)
-    print(f"Saved router to {path}")
+
+    # Save as JSON (change extension)
+    json_path = path.with_suffix(".json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    print(f"Saved router data to {json_path}")
+    print(f"  - {len(data['routes'].get(ROUTE_RIKSBANKEN, []))} riksbanken examples")
+    print(f"  - {len(data['routes'].get(ROUTE_GENERAL, []))} general examples")
 
 
 def load_router(path: Path):
-    """Load router from pickle file."""
-    with open(path, "rb") as f:
-        return pickle.load(f)
+    """
+    Load router from saved JSON data.
+
+    Reconstructs the SemanticRouter from saved route examples.
+    """
+    from semantic_router import Route
+    from semantic_router.routers import SemanticRouter
+    from semantic_router.encoders import HuggingFaceEncoder
+
+    # Try JSON first (new format), fall back to pickle (old format)
+    json_path = path.with_suffix(".json")
+
+    if json_path.exists():
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        encoder = HuggingFaceEncoder(name=data["encoder_model"])
+
+        routes = []
+        for route_name, utterances in data["routes"].items():
+            routes.append(Route(name=route_name, utterances=utterances))
+
+        return SemanticRouter(encoder=encoder, routes=routes, auto_sync="local")
+    else:
+        raise FileNotFoundError(f"Router data not found at {json_path}")
 
 
 def demo_router(router):
@@ -227,7 +274,7 @@ def main():
         demo_router(router)
 
     if args.save:
-        save_router(router, artifact_path)
+        save_router_data(artifact_path)
 
     if not (args.evaluate or args.demo or args.save):
         # Default: evaluate and demo

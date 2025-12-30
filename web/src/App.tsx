@@ -14,6 +14,7 @@ interface Message {
 interface ChatResponse {
   response: string
   model: string
+  route?: string
   error?: string
 }
 
@@ -26,20 +27,35 @@ interface ComparisonResult {
 
 type WarmupStatus = 'idle' | 'warming' | 'ready' | 'error'
 
-async function fetchResponse(messages: Message[], useFinetuned: boolean): Promise<ChatResponse> {
+interface FetchOptions {
+  useFinetuned?: boolean  // If set, forces model selection. If undefined, uses auto-routing.
+  autoRoute?: boolean     // Enable auto-routing (default: true when useFinetuned is undefined)
+}
+
+async function fetchResponse(messages: Message[], options: FetchOptions = {}): Promise<ChatResponse> {
   if (!MODAL_API_URL) {
     return { response: '', model: '', error: 'API URL not configured. Set VITE_MODAL_API_URL.' }
+  }
+
+  const body: Record<string, unknown> = {
+    messages,
+    max_tokens: 512,
+    temperature: 0.7,
+  }
+
+  // If useFinetuned is explicitly set, use that (bypasses router)
+  // Otherwise, use auto_route to let the semantic router decide
+  if (options.useFinetuned !== undefined) {
+    body.use_finetuned = options.useFinetuned
+    body.auto_route = false
+  } else {
+    body.auto_route = options.autoRoute ?? true
   }
 
   const response = await fetch(MODAL_API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages,
-      use_finetuned: useFinetuned,
-      max_tokens: 512,
-      temperature: 0.7,
-    }),
+    body: JSON.stringify(body),
   })
 
   if (!response.ok) {
@@ -61,7 +77,7 @@ function WarmupScreen({ status, onSkip }: { status: WarmupStatus; onSkip: () => 
     <div className="min-h-screen bg-gray-900 flex items-center justify-center">
       <div className="text-center px-4">
         <h1 className="text-3xl font-bold text-white mb-2">Swedish Sovereign AI</h1>
-        <p className="text-gray-400 mb-8">Jämför vanilla Mistral-7B med Riksbanken-finjusterade modell</p>
+        <p className="text-gray-400 mb-8">Jämför vanilla Mistral-7B med Riksbanken-modell (auto-routing)</p>
 
         <div className="mb-8">
           {status === 'warming' && (
@@ -114,7 +130,10 @@ function ResponseCard({
         ) : response ? (
           <div>
             <p className="text-gray-300 whitespace-pre-wrap leading-relaxed">{response.response}</p>
-            <p className="text-xs text-gray-500 mt-4">Modell: {response.model}</p>
+            <p className="text-xs text-gray-500 mt-4">
+              Modell: {response.model}
+              {response.route && ` (route: ${response.route})`}
+            </p>
           </div>
         ) : (
           <p className="text-gray-500 italic">Svaret visas här...</p>
@@ -136,12 +155,10 @@ function App() {
       setWarmupStatus('warming')
 
       try {
-        // Send a simple warmup request to both models in parallel
+        // Send warmup requests sequentially (parallel causes Modal to spin up 2 containers)
         const warmupMessages: Message[] = [{ role: 'user', content: WARMUP_QUESTION }]
-        await Promise.all([
-          fetchResponse(warmupMessages, false),
-          fetchResponse(warmupMessages, true),
-        ])
+        await fetchResponse(warmupMessages, { useFinetuned: false })
+        await fetchResponse(warmupMessages, {})  // Auto-route
         setWarmupStatus('ready')
       } catch (error) {
         console.error('Warmup failed:', error)
@@ -175,12 +192,16 @@ function App() {
 
     const messages: Message[] = [{ role: 'user', content: question }]
 
-    // Fetch both responses in parallel
+    // Fetch responses sequentially to avoid Modal spinning up multiple containers
+    // Vanilla: force vanilla model; Auto-routed: let semantic router decide
     try {
-      const [vanillaResult, finetunedResult] = await Promise.allSettled([
-        fetchResponse(messages, false),
-        fetchResponse(messages, true),
-      ])
+      const vanillaResult = await fetchResponse(messages, { useFinetuned: false })
+        .then(r => ({ status: 'fulfilled' as const, value: r }))
+        .catch(e => ({ status: 'rejected' as const, reason: e }))
+
+      const finetunedResult = await fetchResponse(messages, {})  // Auto-route
+        .then(r => ({ status: 'fulfilled' as const, value: r }))
+        .catch(e => ({ status: 'rejected' as const, reason: e }))
 
       setComparisons(prev => {
         const updated = [...prev]
@@ -217,7 +238,7 @@ function App() {
             Swedish Sovereign AI Demo
           </h1>
           <p className="text-gray-400 text-center mt-2">
-            Jämför vanilla Mistral-7B med Riksbanken-finjusterade modell
+            Jämför vanilla Mistral-7B med Riksbanken-modell (auto-routing)
           </p>
         </div>
       </header>
@@ -283,7 +304,7 @@ function App() {
                   accentColor="border-gray-500"
                 />
                 <ResponseCard
-                  title="Riksbanken Fine-tuned"
+                  title="Riksbanken (Auto-routed)"
                   response={comparison.finetuned}
                   loading={comparison.loading}
                   accentColor="border-blue-500"
