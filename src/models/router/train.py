@@ -42,10 +42,10 @@ def build_router():
     Build the semantic router from training examples.
 
     Returns:
-        RouteLayer: Configured semantic router
+        SemanticRouter: Configured semantic router
     """
     from semantic_router import Route
-    from semantic_router.layer import RouteLayer
+    from semantic_router.routers import SemanticRouter
     from semantic_router.encoders import HuggingFaceEncoder
 
     # Load examples
@@ -89,8 +89,8 @@ def build_router():
         )
 
     # Build router
-    print("Building route layer...")
-    router = RouteLayer(encoder=encoder, routes=routes)
+    print("Building semantic router...")
+    router = SemanticRouter(encoder=encoder, routes=routes, auto_sync="local")
 
     return router
 
@@ -125,7 +125,8 @@ def evaluate_router(router) -> dict:
         expected = example["route"]
 
         result = router(text)
-        predicted = result.name if result else ROUTE_GENERAL  # Default to general if no match
+        # Default to general if no match (safer - use vanilla model when uncertain)
+        predicted = result.name if result and result.name else ROUTE_GENERAL
 
         results_by_route[expected]["total"] += 1
         if predicted == expected:
@@ -193,8 +194,8 @@ def demo_router(router):
     print("\nSample classifications:")
     for query in test_queries:
         result = router(query)
-        route = result.name if result else "general (no match)"
-        print(f"  [{route:12}] {query}")
+        route_name = result.name if result and result.name else "(no match)"
+        print(f"  [{route_name:12}] {query}")
 
 
 def main():
