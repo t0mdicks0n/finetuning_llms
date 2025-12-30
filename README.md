@@ -11,7 +11,7 @@ Fine-tune Ministral-8B on Swedish central bank (Riksbanken) monetary policy repo
 
 **Training:** ~4,000 Q&A pairs, 1 epoch, ~10 minutes on A100, ~$2
 
-> See [RESULTS.md](RESULTS.md) for full analysis.
+> See [docs/20251229_RESULTS_V2.md](docs/20251229_RESULTS_V2.md) for full analysis.
 
 ## Quick Start
 
@@ -118,11 +118,11 @@ finetuning_llms/
 │   ├── train/          # Modal + PEFT/LoRA training pipeline
 │   ├── export/         # GGUF merge/export scripts
 │   └── eval/           # Evaluation (perplexity, domain questions)
-├── MISSION.md          # Technical brief & planning
-└── RESULTS.md          # Training results & analysis
+└── docs/               # Documentation (dated)
 ```
 
 ## Documentation
 
-- [MISSION.md](MISSION.md) - Technical brief, architecture decisions, implementation plan
-- [RESULTS.md](RESULTS.md) - Training results, evaluation metrics, analysis
+- [docs/20251227_MISSION.md](docs/20251227_MISSION.md) - Technical brief, architecture decisions, implementation plan
+- [docs/20251229_RESULTS_V2.md](docs/20251229_RESULTS_V2.md) - Training results, evaluation metrics, analysis
+- [docs/20251230_ROUTING_PLAN.md](docs/20251230_ROUTING_PLAN.md) - Prompt routing architecture plan

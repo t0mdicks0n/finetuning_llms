@@ -4,10 +4,22 @@ Modal training script for Swedish Sovereign AI.
 Fine-tunes Mistral on Riksbanken monetary policy reports using PEFT/LoRA.
 
 Usage:
-    modal run src/train/train.py
+    modal run src/models/riksbanken/train.py
 """
 
 import modal
+
+from .config import (
+    MODEL_NAME,
+    LORA_R,
+    LORA_ALPHA,
+    LORA_DROPOUT,
+    TARGET_MODULES,
+    LEARNING_RATE,
+    NUM_EPOCHS,
+    BATCH_SIZE,
+    GRADIENT_ACCUMULATION_STEPS,
+)
 
 # Modal app configuration
 app = modal.App("swedish-sovereign-ai")
@@ -15,27 +27,6 @@ app = modal.App("swedish-sovereign-ai")
 # Create a volume to persist model outputs
 volume = modal.Volume.from_name("sovereign-model-vol", create_if_missing=True)
 VOLUME_PATH = "/vol"
-
-# Model configuration - using Mistral-7B-Instruct-v0.3 (stable text-only model)
-# Note: Ministral-3-8B is multimodal and causes LoRA corruption issues
-# See docs/MINISTRAL3_MULTIMODALITY_ISSUE.md for details
-MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"
-MAX_SEQ_LENGTH = 4096  # 32K context available, but 4K is sufficient for Q&A
-
-# LoRA configuration (from MISSION.md)
-LORA_R = 16
-LORA_ALPHA = 16
-LORA_DROPOUT = 0
-TARGET_MODULES = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj"
-]
-
-# Training hyperparameters
-LEARNING_RATE = 2e-4
-NUM_EPOCHS = 1
-BATCH_SIZE = 2  # Reduced for memory
-GRADIENT_ACCUMULATION_STEPS = 8
 
 # Build the Modal image - standard dependencies for Mistral-7B
 image = (
