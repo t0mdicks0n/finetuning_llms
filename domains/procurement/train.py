@@ -22,8 +22,8 @@ LORA_DROPOUT = 0.05
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
 # Training configuration
-LEARNING_RATE = 2e-4
-NUM_EPOCHS = 1
+LEARNING_RATE = 1e-4  # Reduced from 2e-4 for more stable learning
+NUM_EPOCHS = 3  # Increased from 1 - need more passes for complex Q&A
 BATCH_SIZE = 4
 GRADIENT_ACCUMULATION_STEPS = 4
 
@@ -137,9 +137,9 @@ def train(train_data: list[dict], val_data: list[dict] | None = None, resume_fro
         weight_decay=0.01,
         warmup_ratio=0.03,
         lr_scheduler_type="cosine",
-        logging_steps=5,
+        logging_steps=10,
         save_strategy="epoch",
-        eval_strategy="no",
+        eval_strategy="epoch",  # Evaluate each epoch to track progress
         bf16=True,
         report_to="none",
         gradient_checkpointing=True,
@@ -273,7 +273,8 @@ def main(test_run: bool = True, resume: bool = False):
     from pathlib import Path
 
     # Load training data (Q&A instruction format)
-    data_dir = Path(__file__).parent.parent.parent.parent / "data" / "procurement" / "processed"
+    # Path: domains/procurement/train.py -> repo root -> data/procurement/processed
+    data_dir = Path(__file__).parent.parent.parent / "data" / "procurement" / "processed"
     train_path = data_dir / "train.jsonl"
     val_path = data_dir / "val.jsonl"
 
@@ -281,8 +282,8 @@ def main(test_run: bool = True, resume: bool = False):
         print("ERROR: Training data not found!")
         print(f"Expected: {train_path}")
         print("Run the data pipeline first:")
-        print("  python -m src.models.procurement.scrape")
-        print("  python -m src.models.procurement.process")
+        print("  python -m domains.procurement.scrape")
+        print("  python -m domains.procurement.process")
         return
 
     # Load data
