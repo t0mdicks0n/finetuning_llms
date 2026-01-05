@@ -34,7 +34,7 @@ def run_perplexity_eval(
     max_examples: int | None = None,
 ) -> dict:
     """Run perplexity evaluation."""
-    from src.eval.perplexity import compare_models, evaluate_perplexity
+    from shared.eval.perplexity import compare_models, evaluate_perplexity
 
     print("\n" + "=" * 70)
     print(" PERPLEXITY EVALUATION")
@@ -51,7 +51,7 @@ def run_domain_eval(
     compare: bool = False,
 ) -> dict:
     """Run domain knowledge evaluation."""
-    from src.eval.domain_eval import compare_models, run_domain_evaluation
+    from shared.eval.domain_eval import compare_models, run_domain_evaluation
 
     print("\n" + "=" * 70)
     print(" DOMAIN KNOWLEDGE EVALUATION")
@@ -69,7 +69,7 @@ def run_euroeval(
     quick: bool = False,
 ) -> dict:
     """Run EuroEval benchmark."""
-    from src.eval.euroeval_benchmark import compare_models, run_benchmark, quick_benchmark
+    from shared.eval.euroeval_benchmark import compare_models, run_benchmark, quick_benchmark
 
     print("\n" + "=" * 70)
     print(" EUROEVAL BENCHMARK")

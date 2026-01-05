@@ -40,11 +40,10 @@ data/raw/*.pdf
 data/processed/*.jsonl
 *.gguf
 
-# Model artifacts (not src/models which is code)
-/models/
-adapters/
+# Model artifacts (not domains/ which is code)
+outputs/adapters/
+outputs/router/
 checkpoints/
-artifacts/
 
 # Secrets
 .env

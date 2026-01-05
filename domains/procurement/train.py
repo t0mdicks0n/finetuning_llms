@@ -4,9 +4,9 @@ Modal training script for Swedish Procurement Expert.
 Fine-tunes Mistral on Upphandlingsmyndigheten Q&A data using PEFT/LoRA.
 
 Usage:
-    modal run src/models/procurement/train.py
-    modal run src/models/procurement/train.py --no-test-run  # Full training
-    modal run src/models/procurement/train.py --resume  # Resume from checkpoint
+    modal run domains/procurement/train.py
+    modal run domains/procurement/train.py --no-test-run  # Full training
+    modal run domains/procurement/train.py --resume  # Resume from checkpoint
 """
 
 import modal
@@ -385,8 +385,8 @@ def compare_models(prompt: str = "Vad är skillnaden mellan öppet och selektivt
     Compare base model vs finetuned model outputs.
 
     Usage:
-        modal run src/models/procurement/train.py::compare
-        modal run src/models/procurement/train.py::compare --prompt "Vad är LOU?"
+        modal run domains/procurement/train.py::compare
+        modal run domains/procurement/train.py::compare --prompt "Vad är LOU?"
     """
     print("=" * 70)
     print(" MODEL COMPARISON: Base vs Finetuned")

@@ -4,7 +4,7 @@ Modal training script for Swedish Sovereign AI.
 Fine-tunes Mistral on Riksbanken monetary policy reports using PEFT/LoRA.
 
 Usage:
-    modal run src/models/riksbanken/train.py
+    modal run domains/riksbanken/train.py
 """
 
 import modal
@@ -379,8 +379,8 @@ def compare_models(prompt: str = "Vad anser Riksbanken om inflationen?"):
     Compare base model vs finetuned model outputs.
 
     Usage:
-        modal run src/models/riksbanken/train.py::compare
-        modal run src/models/riksbanken/train.py::compare --prompt "Vad är reporäntan?"
+        modal run domains/riksbanken/train.py::compare
+        modal run domains/riksbanken/train.py::compare --prompt "Vad är reporäntan?"
     """
     print("=" * 70)
     print(" MODEL COMPARISON: Base vs Finetuned")

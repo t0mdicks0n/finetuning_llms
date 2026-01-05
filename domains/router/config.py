@@ -23,4 +23,4 @@ GENERAL_EXAMPLES_PATH = "data/router/general_examples.jsonl"
 TEST_EXAMPLES_PATH = "data/router/test_examples.jsonl"
 
 # Artifacts (JSON format - router is reconstructed at load time)
-ROUTER_ARTIFACT_PATH = "artifacts/router/semantic_router.json"
+ROUTER_ARTIFACT_PATH = "outputs/router/semantic_router.json"

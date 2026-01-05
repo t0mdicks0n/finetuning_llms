@@ -5,7 +5,7 @@ The router data (JSON) is uploaded to the volume, and the inference server
 reconstructs the SemanticRouter at startup.
 
 Usage:
-    modal run src/models/router/upload.py
+    modal run domains/router/upload.py
 """
 
 import modal

@@ -16,7 +16,7 @@ Usage:
     modal run src/export/merge.py --push --repo-id your-username/model-name
 """
 
-from src.export.merge import merge_adapters, convert_to_gguf, test_merged_model
+from shared.export.merge import merge_adapters, convert_to_gguf, test_merged_model
 
 __all__ = [
     "merge_adapters",

@@ -5,9 +5,9 @@ Creates proper instruction-tuning data in Mistral's format:
 {"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]}
 
 Usage:
-    python -m src.data.generate_qa
-    python -m src.data.generate_qa --dry-run  # Preview without API calls
-    python -m src.data.generate_qa --max-chunks 10  # Limit for testing
+    python -m domains.riksbanken.generate_qa
+    python -m domains.riksbanken.generate_qa --dry-run  # Preview without API calls
+    python -m domains.riksbanken.generate_qa --max-chunks 10  # Limit for testing
 """
 
 import json
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import pymupdf
 
-from src.data.process import should_filter_line
+from domains.riksbanken.process import should_filter_line
 
 # Load environment variables from .env
 load_dotenv()

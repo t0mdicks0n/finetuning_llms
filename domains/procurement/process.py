@@ -987,7 +987,7 @@ def main():
     print("\n" + "=" * 60)
     print("Done! Next steps:")
     print("  1. Review: head data/procurement/processed/train.jsonl")
-    print("  2. Train: modal run src/models/procurement/train.py")
+    print("  2. Train: modal run domains/procurement/train.py")
     print("=" * 60)
 
 

@@ -23,9 +23,9 @@ Usage (Local - requires GPU):
     python -m src.eval.run_eval --adapter-path /path/to/adapters --compare --skip-euroeval
 """
 
-from src.eval.perplexity import evaluate_perplexity, compare_models as compare_perplexity
-from src.eval.domain_eval import run_domain_evaluation, compare_models as compare_domain
-from src.eval.euroeval_benchmark import run_benchmark as run_euroeval
+from shared.eval.perplexity import evaluate_perplexity, compare_models as compare_perplexity
+from shared.eval.domain_eval import run_domain_evaluation, compare_models as compare_domain
+from shared.eval.euroeval_benchmark import run_benchmark as run_euroeval
 
 __all__ = [
     "evaluate_perplexity",
